@@ -1,7 +1,8 @@
 import http from "http";
-import SocketIo from "socket.io";
+import { Server } from "socket.io";
 import express from "express";
 import path from "path";
+import { doesNotMatch } from "assert";
 
 const __dirname = path.resolve();
 const app = express();
@@ -12,8 +13,50 @@ app.use("/public", express.static(__dirname + "/src/public"));
 app.get("/", (_, res) => res.render("home"));
 app.get("/*", (_, res) => res.redirect("/"));
 
-const httpServer = http.createServer(app);
-const io = SocketIO(httpServer);
+const server = http.createServer(app);
+const io = new Server(server);
+
+function publicRooms() {
+  const {
+    sockets: {
+      adapter: { sids, rooms },
+    },
+  } = io;
+  const publicRooms = [];
+  rooms.forEach((_, key) => {
+    if (sids.get(key) === undefined) {
+      publicRooms.push(key);
+    }
+  });
+  return publicRooms;
+}
+
+io.on("connection", (socket) => {
+  socket["nickname"] = "Anonymous";
+  socket.onAny((event) => {
+    console.log(io.sockets.adapter);
+    console.log(`Socket Event:${event}`);
+  });
+  socket.on("enter_room", (roomName, done) => {
+    socket.join(roomName); //방에들어간다.
+    console.log(done);
+    done();
+    socket.to(roomName).emit("welcome", socket.nickname);
+    io.sockets.emit("room_change", publicRooms());
+  });
+  socket.on("disconnecting", () => {
+    socket.rooms.forEach((room) => socket.to(room).emit("bye", socket.nickname));
+  });
+  socket.on("disconnect", () => {
+    io.sockets.emit("room_change", publicRooms());
+  });
+  socket.on("new_message", (msg, room, done) => {
+    socket.to(room).emit("new_message", `${socket.nickname} : ${msg}`);
+    done();
+  });
+
+  socket.on("nickname", (nickname) => (socket["nickname"] = nickname));
+}); //backend 받을준비
 
 const handleListen = () => console.log("서버켜짐");
-app.listen(3000, handleListen);
+server.listen(3000, handleListen);
